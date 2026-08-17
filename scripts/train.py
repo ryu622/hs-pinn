@@ -138,10 +138,12 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--checkpoint_every", type=int, default=10)
     parser.add_argument("--near_radius", type=float, default=15.0)
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--run_name", type=str, default=None)
     args = parser.parse_args()
+    torch.manual_seed(args.seed)
 
-    run_name = args.run_name or f"{args.constraint_mode}_lam{args.lam}_{int(time.time())}"
+    run_name = args.run_name or f"{args.constraint_mode}_lam{args.lam}_seed{args.seed}_{int(time.time())}"
     run_dir = CHECKPOINT_DIR / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -182,6 +184,7 @@ def main() -> None:
         "lr": args.lr,
         "target_compactness": target_std,
         "near_radius": args.near_radius,
+        "seed": args.seed,
         "n_train": len(train_ds),
         "n_valid": len(valid_ds),
         "history": [],
