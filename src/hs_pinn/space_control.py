@@ -5,11 +5,21 @@
 （判定③：定式化を変えても傾向が安定するかの確認用）。
 
 1. voronoi_dominance            : 最近傍選手が攻撃側であるグリッド点の割合（速度を考慮しない最も単純な幾何指標）
-2. isotropic_gaussian_dominance : 等方ガウス影響関数の合計に基づく支配度（速度なし、半径固定）
+2. isotropic_gaussian_dominance : 等方ガウス影響関数に基づく支配面積（速度なし、半径固定）
 3. velocity_oriented_dominance  : 進行方向に伸びる異方ガウス影響関数（Fernández & Bornnに寄せた簡易版）
 
 ハイパーパラメータ（影響半径など）は判定フェーズ用の仮の値であり、本実装フェーズで
 チューニングが必要になる可能性がある。
+
+【修正履歴】isotropic_gaussian_dominance / velocity_oriented_dominance は当初
+「ピッチ全面での平均」だったが、`scripts/synthetic_validity_check.py`の合成データ
+健全性チェックで、守備陣から攻撃側フォーメーションを一様に引き離す明確な改善方向の
+摂動に対してほぼ無相関（うまくいかない）ことが判明した。大半のグリッド点が選手から
+遠く両チームの影響が共にゼロ（sigmoid(0)=0.5固定）になり平均が希釈される、
+学習損失側（`soft_constraints.py`）で先に見つけたのと同じ問題が原因。
+対策として、選手近傍（`near_radius`以内）のグリッド点だけを対象に、平均ではなく
+cell_area加重の面積和＋平方根（線形スケールに変換）を使う形に修正した
+（`voronoi_dominance`はこの問題がなく、健全性チェックも良好だったため変更していない）。
 """
 
 from __future__ import annotations
@@ -75,12 +85,28 @@ def _isotropic_influence(grid: np.ndarray, positions: np.ndarray, sigma: float) 
     return np.exp(-0.5 * sq_dist / sigma**2).sum(axis=1)  # (G,)
 
 
+def _min_dist_to_positions(grid: np.ndarray, positions: np.ndarray) -> np.ndarray:
+    return np.linalg.norm(grid[:, None, :] - positions[None, :, :], axis=2).min(axis=1)
+
+
+def _relevant_mask(
+    grid: np.ndarray, attack_pos: np.ndarray, defend_pos: np.ndarray, near_radius: float
+) -> np.ndarray:
+    d_attack = _min_dist_to_positions(grid, attack_pos)
+    d_defend = _min_dist_to_positions(grid, defend_pos)
+    return np.minimum(d_attack, d_defend) <= near_radius
+
+
 def isotropic_gaussian_dominance(
     grid: np.ndarray,
     attack_pos_t: np.ndarray,
     defend_pos_t: np.ndarray,
     sigma: float = 9.0,
+    near_radius: float = 15.0,
+    pitch_area: float = 105.0 * 68.0,
 ) -> float:
+    """選手近傍（near_radius以内）における攻撃側の支配面積の平方根（m）。
+    モジュールdocstringの【修正履歴】参照。"""
     (attack_valid,) = _valid_rows(attack_pos_t)
     (defend_valid,) = _valid_rows(defend_pos_t)
     if len(attack_valid) == 0 or len(defend_valid) == 0:
@@ -90,7 +116,12 @@ def isotropic_gaussian_dominance(
         grid, defend_valid, sigma
     )
     control = 1.0 / (1.0 + np.exp(-net))
-    return float(control.mean())
+    relevant = _relevant_mask(grid, attack_valid, defend_valid, near_radius)
+    if not relevant.any():
+        return np.nan
+    cell_area = pitch_area / grid.shape[0]
+    area = float(control[relevant].sum()) * cell_area
+    return float(np.sqrt(area))
 
 
 def _oriented_influence(
@@ -128,7 +159,11 @@ def velocity_oriented_dominance(
     sigma_across: float = 7.0,
     speed_to_sigma_along: float = 1.5,
     lookahead_s: float = 0.5,
+    near_radius: float = 15.0,
+    pitch_area: float = 105.0 * 68.0,
 ) -> float:
+    """選手近傍（near_radius以内）における攻撃側の支配面積の平方根（m）。
+    モジュールdocstringの【修正履歴】参照。"""
     attack_p, attack_v = _valid_rows(attack_pos_t, attack_vel_t)
     defend_p, defend_v = _valid_rows(defend_pos_t, defend_vel_t)
     if len(attack_p) == 0 or len(defend_p) == 0:
@@ -140,7 +175,12 @@ def velocity_oriented_dominance(
         grid, defend_p, defend_v, sigma_across, speed_to_sigma_along, lookahead_s
     )
     control = 1.0 / (1.0 + np.exp(-net))
-    return float(control.mean())
+    relevant = _relevant_mask(grid, attack_p, defend_p, near_radius)
+    if not relevant.any():
+        return np.nan
+    cell_area = pitch_area / grid.shape[0]
+    area = float(control[relevant].sum()) * cell_area
+    return float(np.sqrt(area))
 
 
 SPACE_FORMULATIONS = {
