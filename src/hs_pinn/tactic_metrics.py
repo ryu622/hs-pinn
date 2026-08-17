@@ -1,0 +1,87 @@
+"""L_tactic（コンパクトネス・スペース支配）の定式化。
+
+判定フェーズ（判定①〜③）向けに、モデル学習なしで観測軌道へ直接計算できる
+関数群を提供する。判定③（定式化を変えても傾向が安定するか）に備え、
+コンパクトネスは3通りの定式化を用意する。
+
+スペース支配（pitch control）は別途実装予定（未実装）。
+
+【改訂履歴】初期実装では`centroid_distance_variance`（全方位の重心距離分散）を
+採用していたが、phase0_report.md 6節の追加検証で「全方位」より
+「攻撃方向（縦）のみ」の分散の方が成功率との相関が明確に強い
+（r=0.075→0.185）ことが判明したため、`longitudinal_variance`に差し替えた。
+"""
+
+from __future__ import annotations
+
+import numpy as np
+from scipy.spatial import ConvexHull
+from scipy.spatial.distance import pdist
+
+
+def _valid_positions(positions_t: np.ndarray) -> np.ndarray:
+    """(n_players, 2) からNaN行を除いたものを返す。"""
+    mask = ~np.isnan(positions_t[:, 0])
+    return positions_t[mask]
+
+
+def pairwise_distance_variance(positions_t: np.ndarray) -> float:
+    """定式化①：選手間距離（全ペア）の分散。計画書2.3節の定義そのもの。"""
+    valid = _valid_positions(positions_t)
+    if len(valid) < 2:
+        return np.nan
+    return float(pdist(valid).var())
+
+
+def centroid_distance_variance(positions_t: np.ndarray) -> float:
+    """（旧定式化②、現在は未使用）チーム重心からの距離の分散（stretch index系）。
+    全方位を等価に扱うため、縦の間延びと横への広がりを区別できず、
+    成功率との相関が弱かった（r=-0.040）。`longitudinal_variance`に差し替え済み。
+    """
+    valid = _valid_positions(positions_t)
+    if len(valid) < 2:
+        return np.nan
+    centroid = valid.mean(axis=0)
+    dists = np.linalg.norm(valid - centroid, axis=1)
+    return float(dists.var())
+
+
+def longitudinal_variance(positions_t: np.ndarray) -> float:
+    """定式化②：攻撃方向（x軸、常に+xが攻撃方向になるよう正規化済み）のみの
+    分散。「間延び」は主に縦方向（前後）を指すという解釈に基づく操作化。
+    横方向の広がり（幅を使うこと）はコンパクトネス違反とみなさない。
+    """
+    valid = _valid_positions(positions_t)
+    if len(valid) < 2:
+        return np.nan
+    return float(valid[:, 0].var())
+
+
+def convex_hull_area(positions_t: np.ndarray) -> float:
+    """定式化③：チームの占有面積（凸包の面積、m^2）。距離の分散とは異なる
+    幾何学的な観点（広がり方ではなく占有領域そのもの）でコンパクトネスを捉える。
+    """
+    valid = _valid_positions(positions_t)
+    if len(valid) < 3:
+        return np.nan
+    return float(ConvexHull(valid).volume)  # 2Dでは`volume`が面積を表す
+
+
+COMPACTNESS_FORMULATIONS = {
+    "pairwise_distance_variance": pairwise_distance_variance,
+    "longitudinal_variance": longitudinal_variance,
+    "convex_hull_area": convex_hull_area,
+}
+
+
+def compactness_timeseries(attack_pos: np.ndarray, formulation: str) -> np.ndarray:
+    """attack_pos: (T, n_players, 2) -> (T,) の時系列。"""
+    fn = COMPACTNESS_FORMULATIONS[formulation]
+    T = attack_pos.shape[0]
+    return np.array([fn(attack_pos[t]) for t in range(T)])
+
+
+def compactness_scalar(attack_pos: np.ndarray, formulation: str) -> float:
+    """時間窓全体を平均した、イベント1件あたりのコンパクトネス値。"""
+    series = compactness_timeseries(attack_pos, formulation)
+    return float(np.nanmean(series))
