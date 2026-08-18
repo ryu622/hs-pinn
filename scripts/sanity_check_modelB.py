@@ -5,9 +5,11 @@
 数値的な退化解チェック（段階2）は選手間距離の崩壊は検出できるが、
 「不自然だが崩壊はしていない」形状までは検出できないため、別途必要。
 
-実データ全件でmodelA（λ=0）・modelB（λ=8, λ=2参考）を学習し、いくつかの
-代表イベントについて「実際の守備」「modelA予測」「modelB予測」を並べて
-ピッチ図にプロットする。
+実データ全件でmodelA（λ=0）・modelB（λ=0.5、複数シード確認で最も頑健だった
+設定。documents/stage3_multiseed_report.md参照。当初はλ=8で実施していたが、
+その結果は単一シードの当たりだったと判明したためλ=0.5に変更）を学習し、
+いくつかの代表イベントについて「実際の守備」「modelA予測」「modelB予測」を
+並べてピッチ図にプロットする。
 
 実行: uv run python scripts/sanity_check_modelB.py
 """
@@ -32,7 +34,7 @@ from hs_pinn.model import TrajectoryBackbone
 from hs_pinn.soft_constraints import compactness_loss, compute_target_compactness
 
 CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "processed" / "counter_trajectories.pkl"
-OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "modelB_sanity_check"
+OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "modelB_sanity_check_lam0.5"
 PITCH_LENGTH, PITCH_WIDTH = 105.0, 68.0
 PITCH_BOUNDS = PitchBounds(0.0, PITCH_LENGTH, 0.0, PITCH_WIDTH)
 EPOCHS = 30
@@ -67,7 +69,7 @@ def plot_comparison(event_idx: int, real_defend, pred_a, pred_b, attack_real, de
     fig, axes = plt.subplots(1, 3, figsize=(24, 6.8))
     pitch = Pitch(pitch_type="custom", pitch_length=PITCH_LENGTH, pitch_width=PITCH_WIDTH, line_color="black")
 
-    panels = [("REAL defense", real_defend), ("modelA (lambda=0)", pred_a), ("modelB (lambda=8)", pred_b)]
+    panels = [("REAL defense", real_defend), ("modelA (lambda=0)", pred_a), ("modelB (lambda=0.5)", pred_b)]
 
     for ax, (title, defend_traj) in zip(axes, panels):
         pitch.draw(ax=ax)
@@ -110,8 +112,8 @@ def main() -> None:
 
     print("training modelA (lambda=0)...")
     model_a = train_model(loader, lam=0.0, target_std=target_std)
-    print("training modelB (lambda=8)...")
-    model_b = train_model(loader, lam=8.0, target_std=target_std)
+    print("training modelB (lambda=0.5)...")
+    model_b = train_model(loader, lam=0.5, target_std=target_std)
 
     # 代表イベントとして、成功2件・失敗2件を異なる試合から選ぶ
     labels = [t.label for t in trajs]
