@@ -1,13 +1,24 @@
 """ケーススタディ用の代表シーン選定・可視化（計画書6.1節・7節）。
 
-L_compact（縦方向の分散、高いほど間延び）とL_space（Voronoi占有率、
-低いほど支配できていない）を組み合わせた「セオリーからの逸脱度」指標で、
-成功/失敗 × 逸脱度high/lowの2x2で代表シーンを選び、選手の軌道をピッチ図に
-プロットする。恣意的な選定に見えないよう、選定基準はここに明記する。
+成功/失敗 × 「セオリーからの逸脱度」high/lowの2x2で代表シーンを選び、
+選手の軌道をピッチ図にプロットする。恣意的な選定に見えないよう、選定基準は
+ここに明記する。
+
+【逸脱度の定義について】初版ではL_compactに生の値（縦方向の分散そのもの）を
+使っていたが、「逸脱」と呼ぶ以上、セオリー（理想）と現実の差を見るべき、
+という指摘を受けて修正した。計画書2.3節の$\\mathcal{L}_{compact}=|\\text{Var}-
+\\text{目標値}|$の定義通り、観測データ全体から校正した目標値との乖離を使う
+（`tactic_metrics.compactness_deviation`）。
+L_spaceは計画書上も目標値という概念がなく直接最大化する量のため、
+生のVoronoi占有率のまま（値が低い＝理想から遠い、として扱う）。
+
+※ この定義変更はケーススタディの選定にのみ適用する。判定①〜③本体
+（`judge_phase0.py`、phase0_report.md）は生の値のままの従来構造を維持する
+（目標値との乖離に直すとコンパクトネスの相関が消えることが分かったが、
+これは判定フェーズの結論を差し替えるものではなく、別途記録する）。
 
 選定基準：
-- 逸脱度スコア = zscore(L_compact) - zscore(L_space)
-  （間延びしている「かつ/または」スペースを支配できていないほど高スコア）
+- 逸脱度スコア = zscore(L_compact_deviation) - zscore(L_space)
 - 成功イベント・失敗イベントそれぞれの中で、逸脱度スコアが最大/最小の1件を選ぶ
   （calibrationなし、単純に分布の端を取るルールベースの選定）
 
@@ -24,7 +35,7 @@ import numpy as np
 from mplsoccer import Pitch
 
 from hs_pinn.space_control import build_pitch_grid, voronoi_dominance
-from hs_pinn.tactic_metrics import compactness_scalar
+from hs_pinn.tactic_metrics import compactness_deviation, compute_compactness_target
 
 CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "processed" / "counter_trajectories.pkl"
 OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "case_studies"
@@ -71,13 +82,13 @@ def plot_event(traj, deviation_score: float, compact: float, space: float, tag: 
     label_str = "SUCCESS" if traj.label == 1 else "FAILURE"
     title = (
         f"{tag_en}\n{traj.match_id} / {traj.event_id}  result={label_str}\n"
-        f"L_compact={compact:.1f}  L_space(Voronoi)={space:.3f}  deviation_score={deviation_score:+.2f}"
+        f"L_compact(|value-target|)={compact:.1f}  L_space(Voronoi)={space:.3f}  deviation_score={deviation_score:+.2f}"
     )
     ax.set_title(title, fontsize=11)
     ax.legend(loc="upper left", fontsize=8)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = OUT_DIR / f"{tag}_{traj.match_id}_{traj.event_id}.png"
+    out_path = OUT_DIR / f"{tag}_{traj.match_id}_{traj.event_id}_v2.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return out_path
@@ -89,9 +100,12 @@ def main() -> None:
 
     grid = build_pitch_grid(PITCH_LENGTH, PITCH_WIDTH)
 
+    compact_target = compute_compactness_target(trajs, "longitudinal_variance")
+    print(f"L_compact target (観測データ全体の平均): {compact_target:.2f}\n")
+
     compacts, spaces = [], []
     for t in trajs:
-        compacts.append(compactness_scalar(t.attack_pos, "longitudinal_variance"))
+        compacts.append(compactness_deviation(t.attack_pos, "longitudinal_variance", compact_target))
         spaces.append(space_dominance_scalar(t, grid))
     compacts, spaces = np.array(compacts), np.array(spaces)
 

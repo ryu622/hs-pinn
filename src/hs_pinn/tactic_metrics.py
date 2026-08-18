@@ -6,10 +6,18 @@
 
 スペース支配（pitch control）は別途実装予定（未実装）。
 
-【改訂履歴】初期実装では`centroid_distance_variance`（全方位の重心距離分散）を
+【改訂履歴1】初期実装では`centroid_distance_variance`（全方位の重心距離分散）を
 採用していたが、phase0_report.md 6節の追加検証で「全方位」より
 「攻撃方向（縦）のみ」の分散の方が成功率との相関が明確に強い
 （r=0.075→0.185）ことが判明したため、`longitudinal_variance`に差し替えた。
+
+【改訂履歴2】判定フェーズ（判定②③、`judge_phase0.py`等）では長らく
+`compactness_scalar`の生の値（分散・面積そのもの）を「逸脱度」として
+成功率との相関に使っていたが、計画書2.3節のL_compactの定義は
+$|\text{Var}-\text{目標値}|$という目標値からの乖離であり、生の値とは
+異なる量だった。`compute_compactness_target` / `compactness_deviation`を
+追加し、観測データ全体から算出した目標値との乖離を「逸脱度」として
+使うよう修正した（詳細はphase0_report.md参照）。
 """
 
 from __future__ import annotations
@@ -82,6 +90,29 @@ def compactness_timeseries(attack_pos: np.ndarray, formulation: str) -> np.ndarr
 
 
 def compactness_scalar(attack_pos: np.ndarray, formulation: str) -> float:
-    """時間窓全体を平均した、イベント1件あたりのコンパクトネス値。"""
+    """時間窓全体を平均した、イベント1件あたりのコンパクトネス値（生の値）。"""
     series = compactness_timeseries(attack_pos, formulation)
     return float(np.nanmean(series))
+
+
+def compute_compactness_target(trajectories: list, formulation: str) -> float:
+    """判定フェーズ用の目標値：観測データ全体（全イベント）における
+    `compactness_scalar`（生の値）の平均。計画書2.3節の$|\\text{Var}-\\text{目標値}|$の
+    「目標値」に相当する（「チームが典型的にはこの程度の広がりを持つ」という
+    観測データからの校正値）。
+
+    ※ `soft_constraints.py`の`compute_target_compactness`とは別物。あちらは
+    学習損失用にtrain split・予測対象区間（target window）・標準偏差(std)で
+    校正しており、ここでは判定フェーズ用に全データ・全窓・生の値（分散等）で
+    校正している。目的が異なるため意図的に別関数にしている。
+    """
+    values = [compactness_scalar(t.attack_pos, formulation) for t in trajectories]
+    return float(np.nanmean(values))
+
+
+def compactness_deviation(attack_pos: np.ndarray, formulation: str, target: float) -> float:
+    """L_compact = |生の値 - 目標値|（計画書2.3節の定義通り）。"""
+    raw = compactness_scalar(attack_pos, formulation)
+    if np.isnan(raw):
+        return np.nan
+    return abs(raw - target)
