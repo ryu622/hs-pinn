@@ -18,7 +18,7 @@ from __future__ import annotations
 import torch
 from torch import Tensor, nn
 
-from hs_pinn.dataset import MAX_ATTACK_PLAYERS, TARGET_FRAMES
+from hs_pinn.dataset import MAX_ATTACK_PLAYERS, MAX_DEFEND_PLAYERS, TARGET_FRAMES
 from hs_pinn.hard_constraints import HardConstraintLayer, PitchBounds
 
 ENTITY_FEATURES = 7  # x, y, vx, vy, is_attack, is_defend, is_ball（卒論PIGNNのノード特徴量と同じ7次元）
@@ -48,9 +48,13 @@ class TrajectoryBackbone(nn.Module):
         dt: float = 1.0 / 25,
         pitch_bounds: PitchBounds | None = None,
         constraint_layer: nn.Module | None = None,
+        predict_side: str = "attack",
     ) -> None:
         super().__init__()
         self.target_frames = target_frames
+        if predict_side not in ("attack", "defend"):
+            raise ValueError(predict_side)
+        self.predict_side = predict_side
 
         # 選手ごとのエンコーダ（MLP、attack/defend/ballで重み共有）
         self.entity_encoder = nn.Sequential(
@@ -105,11 +109,17 @@ class TrajectoryBackbone(nn.Module):
 
         attn_out, _ = self.attention(summary, summary, summary, key_padding_mask=key_padding_mask)
 
-        attack_summary = attn_out[:, :MAX_ATTACK_PLAYERS]  # (B, max_attack, hidden_dim)
-        raw = self.decoder(attack_summary)  # (B, max_attack, target_frames*2)
-        raw_accel = raw.view(B, MAX_ATTACK_PLAYERS, self.target_frames, 2)
+        if self.predict_side == "attack":
+            target_summary = attn_out[:, :MAX_ATTACK_PLAYERS]
+            n_players = MAX_ATTACK_PLAYERS
+            init_pos, init_vel = batch["init_position"], batch["init_velocity"]
+        else:
+            target_summary = attn_out[:, MAX_ATTACK_PLAYERS : MAX_ATTACK_PLAYERS + MAX_DEFEND_PLAYERS]
+            n_players = MAX_DEFEND_PLAYERS
+            init_pos, init_vel = batch["init_defend_position"], batch["init_defend_velocity"]
 
-        positions, velocities, accelerations = self.hard_constraints(
-            raw_accel, batch["init_position"], batch["init_velocity"]
-        )
+        raw = self.decoder(target_summary)  # (B, n_players, target_frames*2)
+        raw_accel = raw.view(B, n_players, self.target_frames, 2)
+
+        positions, velocities, accelerations = self.hard_constraints(raw_accel, init_pos, init_vel)
         return positions, velocities, accelerations

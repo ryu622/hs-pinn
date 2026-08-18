@@ -135,13 +135,21 @@ def space_control_loss(
     return -space_dominance
 
 
-def compute_target_compactness(trajectories: list[CounterTrajectory], input_frames: int) -> float:
+def compute_target_compactness(
+    trajectories: list[CounterTrajectory], input_frames: int, side: str = "attack"
+) -> float:
     """学習データ（実軌道）の予測対象区間（input_frames以降）における
     縦方向の標準偏差（`longitudinal_variance`の平方根）の平均値を、
-    L_compactの目標値として計算する（`compactness_loss`と単位を揃えるため）。"""
+    L_compactの目標値として計算する（`compactness_loss`と単位を揃えるため）。
+
+    `side`："attack"（既定）または"defend"。10節（守備側予測への転換）対応。
+    """
+    if side not in ("attack", "defend"):
+        raise ValueError(side)
     values = []
     for traj in trajectories:
-        target_window = traj.attack_pos[input_frames:]
+        pos = traj.attack_pos if side == "attack" else traj.defend_pos
+        target_window = pos[input_frames:]
         for t in range(target_window.shape[0]):
             v = longitudinal_variance(target_window[t])
             if not np.isnan(v):

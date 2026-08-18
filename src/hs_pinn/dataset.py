@@ -43,15 +43,19 @@ class TrainingSample:
     attack_mask: torch.Tensor  # (max_attack,) bool
     defend_mask: torch.Tensor  # (max_defend,) bool
 
-    # ハード制約層への初期状態（観測窓の最終フレーム）
-    init_position: torch.Tensor  # (max_attack, 2)
+    # ハード制約層への初期状態（観測窓の最終フレーム）。従来は攻撃側予測のみだったが、
+    # 計画書10節（守備側予測への転換）に伴い守備側の初期状態も追加した。
+    init_position: torch.Tensor  # (max_attack, 2) 旧来通り攻撃側
     init_velocity: torch.Tensor  # (max_attack, 2)
+    init_defend_position: torch.Tensor  # (max_defend, 2)
+    init_defend_velocity: torch.Tensor  # (max_defend, 2)
 
     # 予測対象（shape=(T_target, max_attack, 2)）
     target_attack_pos: torch.Tensor
 
-    # 予測対象区間における守備側の実軌道（正解データ）。守備側は予測対象に含めない
-    # 設計（計画書3.2節）のため、L_space計算時などは固定コンテキストとして扱う。
+    # 予測対象区間における守備側の実軌道（正解データ）。10節以前は守備側を予測対象に
+    # 含めない設計だったため固定コンテキスト用に保持していたが、10節では守備側予測の
+    # 学習ターゲットとしても使う。
     target_defend_pos: torch.Tensor  # (T_target, max_defend, 2)
 
 
@@ -114,6 +118,8 @@ def build_sample(
         defend_mask=torch.from_numpy(defend_mask),
         init_position=torch.from_numpy(attack_pos[input_frames - 1]),
         init_velocity=torch.from_numpy(attack_vel[input_frames - 1]),
+        init_defend_position=torch.from_numpy(defend_pos[input_frames - 1]),
+        init_defend_velocity=torch.from_numpy(defend_vel[input_frames - 1]),
         target_attack_pos=torch.from_numpy(attack_pos[input_frames:T]),
         target_defend_pos=torch.from_numpy(defend_pos[input_frames:T]),
     )
@@ -148,6 +154,8 @@ def collate_samples(samples: list[TrainingSample]) -> dict:
         "defend_mask": torch.stack([s.defend_mask for s in samples]),
         "init_position": torch.stack([s.init_position for s in samples]),
         "init_velocity": torch.stack([s.init_velocity for s in samples]),
+        "init_defend_position": torch.stack([s.init_defend_position for s in samples]),
+        "init_defend_velocity": torch.stack([s.init_defend_velocity for s in samples]),
         "target_attack_pos": torch.stack([s.target_attack_pos for s in samples]),
         "target_defend_pos": torch.stack([s.target_defend_pos for s in samples]),
     }

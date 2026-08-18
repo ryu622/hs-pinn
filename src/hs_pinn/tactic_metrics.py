@@ -95,18 +95,26 @@ def compactness_scalar(attack_pos: np.ndarray, formulation: str) -> float:
     return float(np.nanmean(series))
 
 
-def compute_compactness_target(trajectories: list, formulation: str) -> float:
+def compute_compactness_target(trajectories: list, formulation: str, side: str = "attack") -> float:
     """判定フェーズ用の目標値：観測データ全体（全イベント）における
     `compactness_scalar`（生の値）の平均。計画書2.3節の$|\\text{Var}-\\text{目標値}|$の
     「目標値」に相当する（「チームが典型的にはこの程度の広がりを持つ」という
     観測データからの校正値）。
+
+    `side`："attack"（既定）または"defend"。10節（守備側予測への転換）に伴い、
+    どちらのサイドの軌道から校正するか選べるようにした。
 
     ※ `soft_constraints.py`の`compute_target_compactness`とは別物。あちらは
     学習損失用にtrain split・予測対象区間（target window）・標準偏差(std)で
     校正しており、ここでは判定フェーズ用に全データ・全窓・生の値（分散等）で
     校正している。目的が異なるため意図的に別関数にしている。
     """
-    values = [compactness_scalar(t.attack_pos, formulation) for t in trajectories]
+    if side not in ("attack", "defend"):
+        raise ValueError(side)
+    values = [
+        compactness_scalar(t.attack_pos if side == "attack" else t.defend_pos, formulation)
+        for t in trajectories
+    ]
     return float(np.nanmean(values))
 
 
