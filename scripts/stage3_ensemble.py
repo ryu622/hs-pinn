@@ -6,14 +6,15 @@
 「予測位置」を平均してから距離を計算する（距離を計算してから平均する
 より、先に予測を平均する方が分散削減の効果が直接的）。
 
-λ=0.5（複数シード確認で最も頑健だった設定、documents/stage3_multiseed_report.md）
-を使用する。
+既定はλ=0.5（複数シード確認で最も頑健だった設定、documents/stage3_multiseed_report.md）。
+--lambda_bで他の値も試せる（例：λ=4, 8がアンサンブルで安定するかの診断）。
 
-実行: uv run python scripts/stage3_ensemble.py
+実行: uv run python scripts/stage3_ensemble.py [--lambda_b 8.0]
 """
 
 from __future__ import annotations
 
+import argparse
 import pickle
 import time
 from pathlib import Path
@@ -32,12 +33,10 @@ from hs_pinn.model import TrajectoryBackbone
 from hs_pinn.soft_constraints import compactness_loss, compute_target_compactness
 
 CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "processed" / "counter_trajectories.pkl"
-OUT_PATH = Path(__file__).resolve().parent.parent / "data" / "processed" / "stage3_ensemble.pkl"
 PITCH_BOUNDS = PitchBounds(0.0, 105.0, 0.0, 68.0)
 
 ALL_MATCHES = ["J03WPY", "J03WMX", "J03WN1", "J03WOH", "J03WOY", "J03WQQ", "J03WR9"]
 N_SEEDS = 5
-LAMBDA_B = 0.5
 EPOCHS = 30
 BATCH_SIZE = 16
 
@@ -79,6 +78,15 @@ def get_predictions(model: TrajectoryBackbone, loader) -> dict[tuple[str, str], 
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lambda_b", type=float, default=0.5)
+    args = parser.parse_args()
+    lambda_b = args.lambda_b
+    out_path = (
+        Path(__file__).resolve().parent.parent
+        / "data" / "processed" / f"stage3_ensemble_lam{lambda_b}.pkl"
+    )
+
     with open(CACHE_PATH, "rb") as f:
         all_trajs = pickle.load(f)
 
@@ -100,7 +108,7 @@ def main() -> None:
         for seed in range(N_SEEDS):
             model_a = train_model(train_loader, lam=0.0, target_std=target_std, seed=seed)
             preds_a_by_seed.append(get_predictions(model_a, holdout_loader))
-            model_b = train_model(train_loader, lam=LAMBDA_B, target_std=target_std, seed=seed)
+            model_b = train_model(train_loader, lam=lambda_b, target_std=target_std, seed=seed)
             preds_b_by_seed.append(get_predictions(model_b, holdout_loader))
 
         # real位置・mask・ラベル・奪取位置を1回だけ収集
@@ -140,9 +148,9 @@ def main() -> None:
         print(f"holdout={holdout_match} done ({elapsed:.0f}s elapsed)")
 
     print(f"\ntotal events: {len(records)}")
-    with open(OUT_PATH, "wb") as f:
+    with open(out_path, "wb") as f:
         pickle.dump(records, f)
-    print(f"saved to {OUT_PATH}")
+    print(f"saved to {out_path}")
 
 
 if __name__ == "__main__":
