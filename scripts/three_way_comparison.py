@@ -157,8 +157,15 @@ def main() -> None:
         seen_matches.add(r["match_id"])
         if len(selected) >= N_EVENTS:
             break
+
+    # 追加: 逸脱度が最も高い「成功」シーン（既存の上位はすべて失敗だったため、対照として追加）
+    success_sorted = [r for r in records_sorted if r["label"] == 1]
+    top_success = success_sorted[0]
+    if (top_success["match_id"], top_success["event_id"]) not in {(r["match_id"], r["event_id"]) for r in selected}:
+        selected.append(top_success)
+
     for r in selected:
-        print(f"selected: {r['match_id']} / {r['event_id']}  dist_B={r['dist_B']:.3f}")
+        print(f"selected: {r['match_id']} / {r['event_id']}  dist_B={r['dist_B']:.3f}  label={r['label']}")
 
     ds = CounterAttackDataset(trajs)
     loader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_samples)
