@@ -557,8 +557,7 @@ design2文書（`documents/hs_rethinking_design2.md`）9節の未決定事項の
 
 ### 11.9 次のアクション（優先順位順）
 
-1. Lift/Precision@K評価パイプラインの実装（既存の`data/processed/stage3_ensemble.pkl`・λ=0.5モデルを流用可能）
-2. 上位K件の試合・チーム分布診断の実装（コストほぼゼロ、11.6節）
-3. modelA/modelBのバックボーン共有設計への変更検討（11.3節）
-4. ①PINNゴースト②ナイーブ最適化③modelAの3者比較ケーススタディ（11.4節）
-5. ノイズの床の簡易把握（既存の`scripts/synthetic_bias_calibration.py`の簡易版として流用可能）
+1. ~~Lift/Precision@K評価パイプラインの実装 + 上位K件の試合・チーム分布診断~~ → **完了、dist_B単体を主指標に採用**。理論で決め切らず、dist_B単体と超過逸脱度の両方でAUC・Precision@K・Lift@Kを計算しベイクオフした結果、AUC=0.610(dist_B) vs 0.570(超過逸脱度)、全K水準（10/20/30/50%）でdist_B単体が一貫して優位だった。診断（上位K件の試合・チーム分布）はどのKでも全7試合・全10チームが含まれ、特定の1試合・1チームへの支配は見られなかった。design2文書が指摘した分散加法性の議論（差分はノイズを増幅する）と整合する結果であり、以後dist_B単体をランキング/発見ツールの主指標として採用する（詳細は`documents/lift_precision_at_k_report.md`）
+2. modelA/modelBのバックボーン共有設計への変更検討（11.3節）
+3. ①PINNゴースト②ナイーブ最適化③modelAの3者比較ケーススタディ（11.4節）
+4. ノイズの床の簡易把握（既存の`scripts/synthetic_bias_calibration.py`の簡易版として流用可能）
