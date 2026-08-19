@@ -123,7 +123,9 @@ def plot_comparison(tag: str, match_id: str, event_id: str, real_defend, pred_a,
             ax.scatter(xs[0], ys[0], color="royalblue", s=50, zorder=4, marker="o")
             ax.scatter(xs[-1], ys[-1], color="royalblue", s=80, zorder=4, marker="^")
 
-        ax.plot(ball_pos[:, 0], ball_pos[:, 1], color="black", linewidth=1.0, linestyle="--", zorder=5)
+        ax.plot(ball_pos[:, 0], ball_pos[:, 1], color="black", linewidth=1.5, linestyle="--", zorder=5)
+        ax.scatter(ball_pos[0, 0], ball_pos[0, 1], color="black", s=40, zorder=6, marker="o", facecolors="none")
+        ax.scatter(ball_pos[-1, 0], ball_pos[-1, 1], color="black", s=40, zorder=6, marker="^")
         ax.set_title(title, fontsize=11)
 
     fig.suptitle(
@@ -173,6 +175,7 @@ def main() -> None:
     for batch in eval_loader:
         key = (batch["match_id"][0], batch["event_id"][0])
         batches_by_key[key] = batch
+    traj_by_key = {(t.match_id, t.event_id): t for t in trajs}
 
     for r in selected:
         key = (r["match_id"], r["event_id"])
@@ -188,7 +191,10 @@ def main() -> None:
         pred_a = pos_a[0].permute(1, 0, 2).numpy()
         pred_b_strong = pos_b[0].permute(1, 0, 2).numpy()
         attack_real = batch["target_attack_pos"][0].numpy()
-        ball_pos = batch["input_ball_pos"][0, :, 0, :].numpy()
+        # 選手の予測対象(○→▲)と同じ期間(予測ホライズン)のボール位置を使う。
+        # batch["input_ball_pos"]は観測窓(選手の○より前)のみで期間がずれるため、
+        # 元のCounterTrajectory（全期間分のball_posを持つ）から取り直す。
+        ball_pos = traj_by_key[key].ball_pos[INPUT_FRAMES:]
 
         path = plot_comparison(
             "three_way", r["match_id"], r["event_id"], real_defend, pred_a, pred_b_strong, pred_naive,
