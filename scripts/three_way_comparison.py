@@ -10,8 +10,15 @@
 ランキングに使う運用上のλ（0.5）とは役割が異なるため、意図的に強めのλ=8を使う
 （11.5節）。
 
-代表シーンの選定は、dist_B単体ランキング（11.9節項目1で採用）の上位から、
-試合の多様性を確保して3件選ぶ。
+【修正履歴】初期版は、①事例選定に使うdist_Bランキング（λ=0.5・LOMO-CVアンサンブル、
+excess_deviation_aggregated.pkl由来）と、②実際にmodelBパネルに描画するモデル
+（このスクリプト内で全502件をin-sample学習したλ=8・単一seed）が別物になっており、
+「ランキング上位として選んだのに、可視化している乖離とランキングの根拠が一致しない」
+という不整合があった（`coaching_overlay_prototype_report.md`で発見）。本版では、
+①②とも同一のλ=8・LOMO-CV（該当試合をホールドアウト）モデルで統一する。
+
+事例選定は、この統一したλ=8・LOMO-CVのdist_Bランキングの上位から、試合の多様性を
+確保して3件選ぶ。
 
 実行: uv run python scripts/three_way_comparison.py
 """
@@ -38,7 +45,6 @@ from hs_pinn.model import TrajectoryBackbone
 from hs_pinn.soft_constraints import compactness_loss, compute_target_compactness
 
 CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "processed" / "counter_trajectories.pkl"
-AGG_PATH = Path(__file__).resolve().parent.parent / "data" / "processed" / "excess_deviation_aggregated.pkl"
 OUT_DIR = Path(__file__).resolve().parent.parent / "documents" / "three_way_comparison_images"
 PITCH_LENGTH, PITCH_WIDTH = 105.0, 68.0
 PITCH_BOUNDS = PitchBounds(0.0, PITCH_LENGTH, 0.0, PITCH_WIDTH)
@@ -47,6 +53,7 @@ EPOCHS = 30
 BATCH_SIZE = 16
 NAIVE_STEPS = 300
 N_EVENTS = 3
+ALL_MATCHES = ["J03WPY", "J03WMX", "J03WN1", "J03WOH", "J03WOY", "J03WQQ", "J03WR9"]
 
 
 def train_model(loader, lam: float, target_std: float, seed: int = 0) -> TrajectoryBackbone:
@@ -78,7 +85,7 @@ def naive_optimization_ghost(init_pos: torch.Tensor, mask: torch.Tensor, target_
 
     データ項（実軌道への忠実さ）もハード制約（速度・加速度上限）も一切課さない。
     init_pos: (n_defend, 2)。最終観測フレームの実位置を初期値として複製する。
-    戻り値: (T_target, n_defend, 2)
+    戻り値: (n_defend, T_target, 2)
     """
     n_defend = init_pos.shape[0]
     pos = init_pos.unsqueeze(0).repeat(TARGET_FRAMES, 1, 1).clone().unsqueeze(0)  # (1, T, n, 2)
@@ -91,7 +98,7 @@ def naive_optimization_ghost(init_pos: torch.Tensor, mask: torch.Tensor, target_
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-    return pos[0].permute(1, 0, 2).detach().numpy()  # (T, n, 2)
+    return pos[0].detach().numpy()  # (n, T, 2)
 
 
 def plot_comparison(tag: str, match_id: str, event_id: str, real_defend, pred_a, pred_b_strong, pred_naive,
@@ -115,10 +122,10 @@ def plot_comparison(tag: str, match_id: str, event_id: str, real_defend, pred_a,
             ax.plot(xs, ys, color="crimson", alpha=0.3, linewidth=1.0, zorder=1)
             ax.scatter(xs[-1], ys[-1], color="crimson", s=30, zorder=2, marker="^", alpha=0.6)
 
-        for i in range(defend_traj.shape[1]):
+        for i in range(defend_traj.shape[0]):
             if not defend_mask[i]:
                 continue
-            xs, ys = defend_traj[:, i, 0], defend_traj[:, i, 1]
+            xs, ys = defend_traj[i, :, 0], defend_traj[i, :, 1]
             ax.plot(xs, ys, color="royalblue", alpha=0.7, linewidth=1.5, zorder=3)
             ax.scatter(xs[0], ys[0], color="royalblue", s=50, zorder=4, marker="o")
             ax.scatter(xs[-1], ys[-1], color="royalblue", s=80, zorder=4, marker="^")
@@ -129,7 +136,7 @@ def plot_comparison(tag: str, match_id: str, event_id: str, real_defend, pred_a,
         ax.set_title(title, fontsize=11)
 
     fig.suptitle(
-        f"[{tag}] {match_id} / {event_id}  dist_B(operational lambda=0.5, ranking score)={dist_b:.2f}\n"
+        f"[{tag}] {match_id} / {event_id}  dist_B(lambda={LAMBDA_STRONG:.0f}, LOMO-CV, same model as ranking)={dist_b:.2f}\n"
         f"(red=attack(real, context), blue=defense)",
         fontsize=13,
     )
@@ -143,11 +150,60 @@ def plot_comparison(tag: str, match_id: str, event_id: str, real_defend, pred_a,
 
 def main() -> None:
     with open(CACHE_PATH, "rb") as f:
-        trajs = pickle.load(f)
-    with open(AGG_PATH, "rb") as f:
-        records = pickle.load(f)
+        all_trajs = pickle.load(f)
+    traj_by_key = {(t.match_id, t.event_id): t for t in all_trajs}
 
-    # dist_B単体ランキング上位から、試合の多様性を確保してN_EVENTS件選ぶ
+    # ランキングと可視化を同一モデル(λ=8・LOMO-CV)で統一するため、全7試合分を
+    # ホールドアウト方式で学習・予測し、real/modelA/modelB(λ=8)の軌道と
+    # dist_Bをすべて先にキャッシュしてから事例選定する。
+    cache: dict[tuple[str, str], dict] = {}
+    labels_by_key: dict[tuple[str, str], int] = {}
+
+    for holdout_match in ALL_MATCHES:
+        train_trajs = [t for t in all_trajs if t.match_id != holdout_match]
+        holdout_trajs = [t for t in all_trajs if t.match_id == holdout_match]
+
+        train_ds = CounterAttackDataset(train_trajs)
+        holdout_ds = CounterAttackDataset(holdout_trajs)
+        train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_samples)
+        holdout_loader = DataLoader(holdout_ds, batch_size=1, shuffle=False, collate_fn=collate_samples)
+
+        target_std = compute_target_compactness(train_trajs, INPUT_FRAMES, side="defend")
+        print(f"[holdout={holdout_match}] target_std={target_std:.2f}  training modelA(lambda=0)...")
+        model_a = train_model(train_loader, lam=0.0, target_std=target_std)
+        print(f"[holdout={holdout_match}] training modelB(lambda={LAMBDA_STRONG})...")
+        model_b = train_model(train_loader, lam=LAMBDA_STRONG, target_std=target_std)
+
+        for batch in holdout_loader:
+            key = (batch["match_id"][0], batch["event_id"][0])
+            with torch.no_grad():
+                pos_a, _, _ = model_a(batch)
+                pos_b, _, _ = model_b(batch)
+            defend_mask = batch["defend_mask"][0].numpy()
+            real_defend = batch["target_defend_pos"].permute(0, 2, 1, 3)[0].numpy()  # (n_defend, T, 2)
+            pred_a = pos_a[0].numpy()
+            pred_b = pos_b[0].numpy()
+            diff_b = np.linalg.norm(pred_b - real_defend, axis=-1)
+            dist_b = float(diff_b[defend_mask].mean())
+
+            cache[key] = {
+                "real_defend": real_defend,
+                "pred_a": pred_a,
+                "pred_b": pred_b,
+                "defend_mask": defend_mask,
+                "attack_real": batch["target_attack_pos"][0].numpy(),
+                "init_defend_position": batch["init_defend_position"][0],
+                "dist_b": dist_b,
+                "target_std": target_std,
+            }
+            labels_by_key[key] = int(batch["label"][0])
+
+    records = [
+        {"match_id": k[0], "event_id": k[1], "dist_B": v["dist_b"], "label": labels_by_key[k]}
+        for k, v in cache.items()
+    ]
+
+    # dist_Bランキング上位から、試合の多様性を確保してN_EVENTS件選ぶ
     records_sorted = sorted(records, key=lambda r: -r["dist_B"])
     selected, seen_matches = [], set()
     for r in records_sorted:
@@ -167,45 +223,15 @@ def main() -> None:
     for r in selected:
         print(f"selected: {r['match_id']} / {r['event_id']}  dist_B={r['dist_B']:.3f}  label={r['label']}")
 
-    ds = CounterAttackDataset(trajs)
-    loader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_samples)
-    target_std = compute_target_compactness(trajs, INPUT_FRAMES, side="defend")
-    print(f"target_std (defend, longitudinal): {target_std:.2f}")
-
-    print("training modelA (lambda=0)...")
-    model_a = train_model(loader, lam=0.0, target_std=target_std)
-    print(f"training modelB PINN ghost (lambda={LAMBDA_STRONG})...")
-    model_b = train_model(loader, lam=LAMBDA_STRONG, target_std=target_std)
-
-    eval_loader = DataLoader(ds, batch_size=1, shuffle=False, collate_fn=collate_samples)
-    batches_by_key = {}
-    for batch in eval_loader:
-        key = (batch["match_id"][0], batch["event_id"][0])
-        batches_by_key[key] = batch
-    traj_by_key = {(t.match_id, t.event_id): t for t in trajs}
-
     for r in selected:
         key = (r["match_id"], r["event_id"])
-        batch = batches_by_key[key]
-        defend_mask = batch["defend_mask"][0]
-        init_pos = batch["init_defend_position"][0]
-        pred_naive = naive_optimization_ghost(init_pos, defend_mask, target_std)
-
-        with torch.no_grad():
-            pos_a, _, _ = model_a(batch)
-            pos_b, _, _ = model_b(batch)
-        real_defend = batch["target_defend_pos"][0].numpy()
-        pred_a = pos_a[0].permute(1, 0, 2).numpy()
-        pred_b_strong = pos_b[0].permute(1, 0, 2).numpy()
-        attack_real = batch["target_attack_pos"][0].numpy()
-        # 選手の予測対象(○→▲)と同じ期間(予測ホライズン)のボール位置を使う。
-        # batch["input_ball_pos"]は観測窓(選手の○より前)のみで期間がずれるため、
-        # 元のCounterTrajectory（全期間分のball_posを持つ）から取り直す。
+        c = cache[key]
+        pred_naive = naive_optimization_ghost(c["init_defend_position"], torch.from_numpy(c["defend_mask"]), c["target_std"])
         ball_pos = traj_by_key[key].ball_pos[INPUT_FRAMES:]
 
         path = plot_comparison(
-            "three_way", r["match_id"], r["event_id"], real_defend, pred_a, pred_b_strong, pred_naive,
-            attack_real, defend_mask.numpy(), ball_pos, r["dist_B"],
+            "three_way", r["match_id"], r["event_id"], c["real_defend"], c["pred_a"], c["pred_b"], pred_naive,
+            c["attack_real"], c["defend_mask"], ball_pos, r["dist_B"],
         )
         print(f"saved {path}")
 
