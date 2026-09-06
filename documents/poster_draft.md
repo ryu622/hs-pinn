@@ -53,7 +53,7 @@
 
 ![J03WR9 3者比較](three_way_comparison_images/three_way_J03WR9_18242103500847.png)
 
-**代替案（逸脱度が最も高い事例、dist_B=7.18、ただし失敗シーンなので一言説明が要る）：**
+**代替案（逸脱度が最も高い事例、dist_B=7.92、ただし失敗シーンなので一言説明が要る）：**
 
 ![J03WPY 3者比較](three_way_comparison_images/three_way_J03WPY_18237400000862.png)
 
