@@ -198,10 +198,24 @@ def main() -> None:
             }
             labels_by_key[key] = int(batch["label"][0])
 
+    # ボールがほぼ動いていない（デッドボール）事例を除外する。事例3(J03WR9/18242100001234)で、
+    # ボールが4秒間ピッチ外(-1.31, 39.73)で完全に静止しているデッドボール局面が、
+    # dist_Bランキング上位に紛れ込んでいたことが判明したため(ユーザー指摘で発見)。
+    MIN_BALL_PATH_LENGTH = 5.0  # メートル、予測ホライズン4秒間の総移動距離
+
+    def ball_path_length(key: tuple[str, str]) -> float:
+        ball = traj_by_key[key].ball_pos[INPUT_FRAMES:]
+        diffs = np.linalg.norm(np.diff(ball, axis=0), axis=1)
+        return float(np.nansum(diffs))
+
     records = [
-        {"match_id": k[0], "event_id": k[1], "dist_B": v["dist_b"], "label": labels_by_key[k]}
+        {"match_id": k[0], "event_id": k[1], "dist_B": v["dist_b"], "label": labels_by_key[k],
+         "ball_path_length": ball_path_length(k)}
         for k, v in cache.items()
     ]
+    n_before = len(records)
+    records = [r for r in records if r["ball_path_length"] >= MIN_BALL_PATH_LENGTH]
+    print(f"ball-activity filter: {n_before} -> {len(records)} events (excluded {n_before - len(records)} near-dead-ball events)")
 
     # dist_Bランキング上位から、試合の多様性を確保してN_EVENTS件選ぶ
     records_sorted = sorted(records, key=lambda r: -r["dist_B"])
