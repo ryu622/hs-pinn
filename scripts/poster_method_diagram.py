@@ -64,9 +64,9 @@ def bottom(b):
 
 
 def main() -> None:
-    fig, ax = plt.subplots(figsize=(13, 6.5))
+    fig, ax = plt.subplots(figsize=(13, 7.3))
     ax.set_xlim(0, 13)
-    ax.set_ylim(0, 6.5)
+    ax.set_ylim(-0.9, 6.5)
     ax.axis("off")
 
     # 1. 入力
