@@ -76,7 +76,7 @@ def main() -> None:
 
     # 2. 共有バックボーン
     b_backbone = box(ax, (2.9, 2.6), 2.6, 1.6,
-                      "PINN Backbone（共有）\nSelf-Attention + GRU\n+ Hard制約層\n(速度・加速度上限, ピッチ境界)",
+                      "共有Backbone\nSelf-Attention + GRU\n+ Hard制約層\n(速度・加速度上限, ピッチ境界)",
                       fontsize=10)
 
     arrow(ax, right(b_input), left(b_backbone))
@@ -94,7 +94,7 @@ def main() -> None:
 
     b_modelA = box(ax, (8.7, 4.35), 2.0, 0.95, "modelA\nデータ駆動ghost",
                    face=A_FACE, edge=A_EDGE, fontsize=10.5, weight="bold")
-    b_modelB = box(ax, (8.7, 1.2), 2.0, 0.95, "modelB\nPINNゴースト",
+    b_modelB = box(ax, (8.7, 1.2), 2.0, 0.95, "modelB\n戦術理論ゴースト",
                    face=B_FACE, edge=B_EDGE, fontsize=10.5, weight="bold")
     arrow(ax, right(b_lossA), left(b_modelA), color=A_EDGE)
     arrow(ax, right(b_lossB), left(b_modelB), color=B_EDGE)
